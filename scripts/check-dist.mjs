@@ -2,7 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 const dist = path.resolve('dist');
-
+ 
 async function walk(directory) {
   const entries = await readdir(directory);
   const files = [];
