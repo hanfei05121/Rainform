@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "jsx": "preserve",
+    "useDefineForClassFields": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowJs": false,
+
+    /*
+     * 渐进式 TS 化策略：
+     * - 引擎（src/engine/rainformEngine.ts）是从 6000 行 JS 原样迁移过来的，
+     *   内部大量 THREE 动态访问与 GLSL uniform 反射，暂时不开启严格模式；
+     * - UI 层（.vue / composables / i18n / types）通过下面的显式接口获得真实类型。
+     * 后续可按目录逐步打开 strict：先把 strict 打开跑一次 vue-tsc，再逐文件修。
+     */
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.vue",
+    "vite.config.ts"
+  ],
+  "exclude": ["node_modules", "dist", ".private-backups"]
+}
