@@ -6951,16 +6951,161 @@ function initTuningPanelV2() {
   root.dataset.tuningUnmappedCount = '0';
   root.dataset.tuningAutoCoveredCount = String(missingTuning.length);
 
+  /* ------------------------------------------------------------------
+     液态玻璃 —— 逐参数对齐 careercompass 导航所使用的 LiquidGlass 组件。
+
+     原理：生成一张"法线贴图"SVG（红/蓝渐变 + 中心模糊实心块，difference 混合）作为
+     feImage 输入；再用三条 feDisplacementMap 分别对 R/G/B 通道做不同强度的位移，
+     最后 screen 混合 —— 得到"边缘折射、中间平滑"的玻璃质感，通过 backdrop-filter 应用。
+     ------------------------------------------------------------------ */
+  const LIQUID_GLASS_DEFAULTS = {
+    radius: 999,
+    border: 0.35,
+    lightness: 50,
+    alpha: 0.93,
+    blur: 6,
+    scale: -80,
+    rOffset: 0,
+    gOffset: 2,
+    bOffset: 4,
+    displace: 0,
+    blend: 'difference',
+    xChannel: 'R',
+    yChannel: 'B',
+  };
+  /** 导航同款参数（LiquidGlass :radius="999" :border="0.35" :scale="-80" :blur="6" :g-offset="2" :b-offset="4"） */
+  const LIQUID_GLASS_NAV = {};
+  /** 面板是竖直长条：收窄折射带，并追加少量高斯模糊以保证正文可读 */
+  const LIQUID_GLASS_PANEL = { radius: 0, border: 0.14, displace: 14 };
+
+  const LIQUID_GLASS_SVG_NS = 'http://www.w3.org/2000/svg';
+  let liquidGlassSeed = 0;
+  let liquidGlassDefs = null;
+  const liquidGlassObservers = new Set();
+
+  /** 不支持 backdrop-filter: url() 或用户要求降低动效/透明度时，退回毛玻璃 */
+  const liquidGlassSupported = (() => {
+    if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function') return false;
+    const supportsUrl =
+      CSS.supports('backdrop-filter', 'url(#a)') || CSS.supports('-webkit-backdrop-filter', 'url(#a)');
+    if (!supportsUrl) return false;
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+    const reduceTransparency =
+      window.matchMedia?.('(prefers-reduced-transparency: reduce)')?.matches === true;
+    return !reduceMotion && !reduceTransparency;
+  })();
+
+  const liquidGlassDefsNode = () => {
+    if (liquidGlassDefs && liquidGlassDefs.isConnected) return liquidGlassDefs;
+    const svg = document.createElementNS(LIQUID_GLASS_SVG_NS, 'svg');
+    svg.setAttribute('id', 'rf-liquid-glass-defs');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none';
+    document.body.appendChild(svg);
+    liquidGlassDefs = svg;
+    return svg;
+  };
+
+  /** 法线贴图：黑底 + 红/蓝渐变圆角矩形（差值混合） + 中心模糊的灰色实心块 */
+  const liquidGlassMap = (width, height, config) => {
+    const edge = Math.min(width, height) * (config.border * 0.5);
+    const radius = Math.min(config.radius, width / 2, height / 2);
+    const innerRadius = Math.max(0, radius - edge);
+    const innerWidth = Math.max(0, width - edge * 2);
+    const innerHeight = Math.max(0, height - edge * 2);
+    const svg =
+      `<svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">` +
+      '<defs>' +
+      '<linearGradient id="rfLgRed" x1="100%" y1="0%" x2="0%" y2="0%">' +
+      '<stop offset="0%" stop-color="#0000"/><stop offset="100%" stop-color="red"/></linearGradient>' +
+      '<linearGradient id="rfLgBlue" x1="0%" y1="0%" x2="0%" y2="100%">' +
+      '<stop offset="0%" stop-color="#0000"/><stop offset="100%" stop-color="blue"/></linearGradient>' +
+      '</defs>' +
+      `<rect x="0" y="0" width="${width}" height="${height}" fill="black"></rect>` +
+      `<rect x="0" y="0" width="${width}" height="${height}" rx="${radius}" fill="url(#rfLgRed)"/>` +
+      `<rect x="0" y="0" width="${width}" height="${height}" rx="${radius}" fill="url(#rfLgBlue)" style="mix-blend-mode:${config.blend}"/>` +
+      `<rect x="${edge}" y="${edge}" width="${innerWidth}" height="${innerHeight}" rx="${innerRadius}" ` +
+      `fill="hsl(0 0% ${config.lightness}% / ${config.alpha})" style="filter:blur(${config.blur}px)"/>` +
+      '</svg>';
+    return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  };
+
+  const liquidGlassFilterBody = (mapUrl, config) => {
+    const displacement = (scale, result) =>
+      `<feDisplacementMap in="SourceGraphic" in2="map" xChannelSelector="${config.xChannel}" ` +
+      `yChannelSelector="${config.yChannel}" scale="${scale}" result="${result}"/>`;
+    const channel = (input, values, result) =>
+      `<feColorMatrix in="${input}" type="matrix" values="${values}" result="${result}"/>`;
+    const perChannel = config.rOffset !== 0 || config.gOffset !== 0 || config.bOffset !== 0;
+    const body = perChannel
+      ? displacement(config.scale + config.rOffset, 'dispRed') +
+        channel('dispRed', '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0', 'red') +
+        displacement(config.scale + config.gOffset, 'dispGreen') +
+        channel('dispGreen', '0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0', 'green') +
+        displacement(config.scale + config.bOffset, 'dispBlue') +
+        channel('dispBlue', '0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0', 'blue') +
+        '<feBlend in="red" in2="green" mode="screen" result="rg"/>' +
+        '<feBlend in="rg" in2="blue" mode="screen" result="output"/>'
+      : displacement(config.scale, 'output');
+    const blur = config.displace > 0 ? `<feGaussianBlur stdDeviation="${config.displace}"/>` : '';
+    return (
+      `<feImage x="0" y="0" width="100%" height="100%" href="${mapUrl}" result="map"/>` +
+      body +
+      blur
+    );
+  };
+
+  /** 把液态玻璃挂到某个元素上：尺寸变化时重建贴图，并只在支持时启用滤镜 */
+  const installLiquidGlass = (element, options = {}) => {
+    if (!element) return;
+    const config = { ...LIQUID_GLASS_DEFAULTS, ...options };
+    const filterId = `rfLiquidGlass-${(liquidGlassSeed += 1)}-${Math.random().toString(36).slice(2, 7)}`;
+    const filter = document.createElementNS(LIQUID_GLASS_SVG_NS, 'filter');
+    filter.setAttribute('id', filterId);
+    filter.setAttribute('color-interpolation-filters', 'sRGB');
+    liquidGlassDefsNode().appendChild(filter);
+
+    element.classList.add('rf-liquid-glass');
+
+    let painted = '';
+    const paint = () => {
+      if (!element.isConnected) return;
+      const rect = element.getBoundingClientRect();
+      const width = Math.round(rect.width);
+      const height = Math.round(rect.height);
+      if (width <= 0 || height <= 0) return;
+      const key = `${width}x${height}`;
+      if (key === painted) return;
+      painted = key;
+      filter.innerHTML = liquidGlassFilterBody(liquidGlassMap(width, height, config), config);
+      if (liquidGlassSupported) {
+        element.style.setProperty('backdrop-filter', `url(#${filterId})`);
+        element.style.setProperty('-webkit-backdrop-filter', `url(#${filterId})`);
+      }
+    };
+
+    if (typeof ResizeObserver === 'function') {
+      const observer = new ResizeObserver(paint);
+      observer.observe(element);
+      liquidGlassObservers.add(observer);
+    }
+    paint();
+    requestAnimationFrame(paint);
+  };
+
   const style = document.createElement('style');
   style.id = 'tuning-console-style';
   style.textContent = `
-    #tuning-toggle{position:fixed;top:max(18px,env(safe-area-inset-top));right:max(18px,env(safe-area-inset-right));z-index:1201;display:grid;width:40px;height:40px;padding:0;place-items:center;border:1px solid var(--panel-border);border-radius:50%;background:var(--panel-control-bg);color:rgba(194,203,219,.72);font-size:19px;line-height:1;box-shadow:0 10px 28px rgba(0,0,0,.3);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);cursor:pointer;transition:border-color 160ms ease,background-color 160ms ease,color 160ms ease,transform 160ms ease}
-    #tuning-toggle:hover{border-color:rgba(194,203,219,.42);background:var(--panel-control-hover);color:#fff;transform:translateY(-1px)}
+    .scene-toolbar__toggle{position:relative;z-index:1;display:grid;width:44px;min-height:44px;padding:0;place-items:center;border:0;border-radius:999px;background:transparent;color:rgba(218,225,238,.72);font-size:19px;line-height:1;box-shadow:none;cursor:pointer;transition:background-color 180ms ease,color 180ms ease,box-shadow 200ms ease,transform 150ms ease}
+    .scene-toolbar__toggle::before{position:absolute;top:10px;bottom:10px;left:-2px;width:1px;background:rgba(194,203,219,.1);content:''}
+    .scene-toolbar__toggle:hover{background:rgba(194,203,219,.075);color:rgba(250,251,255,.94)}
+    .scene-toolbar__toggle:active{transform:scale(.94)}
     #tuning-toggle:focus-visible,.tc-search:focus-visible,.tc-tool-btn:focus-visible,.tc-action:focus-visible,.tc-number:focus-visible,.tc-hex:focus-visible,.tc-range:focus-visible,.tc-theme-apply:focus-visible{outline:2px solid var(--panel-accent);outline-offset:2px}
-    #tuning-toggle[aria-expanded="true"]{top:max(26px,env(safe-area-inset-top));right:max(22px,env(safe-area-inset-right));width:var(--panel-close-size);height:var(--panel-close-size);border-color:rgba(250,251,255,.14);background:rgba(250,251,255,.055);color:rgba(194,203,219,.68);font-size:0;box-shadow:inset 0 1px 0 rgba(250,251,255,.07);backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);transform:none}
+    #tuning-toggle[aria-expanded="true"]{position:fixed;z-index:1201;top:max(26px,env(safe-area-inset-top));right:max(22px,env(safe-area-inset-right));width:var(--panel-close-size);height:var(--panel-close-size);min-height:0;border:1px solid rgba(250,251,255,.14);background:rgba(250,251,255,.055);color:rgba(194,203,219,.68);font-size:0;box-shadow:inset 0 1px 0 rgba(250,251,255,.07);backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);transform:none}
     #tuning-toggle[aria-expanded="true"]:hover{border-color:rgba(250,251,255,.28);background:rgba(250,251,255,.11);color:#fff;transform:none}
-    #tuning-toggle[aria-expanded="true"]::before,#tuning-toggle[aria-expanded="true"]::after{position:absolute;width:14px;height:2px;border-radius:999px;background:currentColor;content:''}#tuning-toggle[aria-expanded="true"]::before{transform:rotate(45deg)}#tuning-toggle[aria-expanded="true"]::after{transform:rotate(-45deg)}
-    #tuning-panel{position:fixed;z-index:1200;top:0;right:0;bottom:0;display:flex;width:min(440px,calc(100vw - 36px));padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);flex-direction:column;overflow:hidden;border-left:1px solid var(--panel-border);background:radial-gradient(circle at 88% 0%,rgba(var(--theme-highlight-rgb),.1),transparent 30%),linear-gradient(245deg,rgba(var(--theme-highlight-rgb),.045),transparent 34%),linear-gradient(180deg,var(--panel-surface-top),var(--panel-surface-bottom)),rgba(var(--theme-panel-rgb),.64);color:var(--panel-text-main);font:12px/1.45 Inter,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;box-shadow:inset 1px 0 0 rgba(250,251,255,.04),inset 0 1px 0 rgba(250,251,255,.08),-26px 0 84px rgba(0,0,0,.42);backdrop-filter:blur(42px) saturate(145%);-webkit-backdrop-filter:blur(42px) saturate(145%);opacity:0;visibility:hidden;pointer-events:none;transform:translateX(calc(100% + 24px));transition:opacity 220ms ease,transform 280ms cubic-bezier(.22,1,.36,1),visibility 280ms}
+    #tuning-toggle[aria-expanded="true"]::before,#tuning-toggle[aria-expanded="true"]::after{position:absolute;top:auto;right:auto;bottom:auto;left:auto;width:14px;height:2px;border-radius:999px;background:currentColor;content:''}#tuning-toggle[aria-expanded="true"]::before{transform:rotate(45deg)}#tuning-toggle[aria-expanded="true"]::after{transform:rotate(-45deg)}
+    #tuning-panel{position:fixed;z-index:1200;top:0;right:0;bottom:0;display:flex;width:min(440px,calc(100vw - 36px));padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);flex-direction:column;overflow:hidden;border-left:1px solid var(--panel-border);background:radial-gradient(circle at 88% 0%,rgba(var(--theme-highlight-rgb),.1),transparent 30%),linear-gradient(245deg,rgba(var(--theme-highlight-rgb),.045),transparent 34%),linear-gradient(180deg,var(--panel-surface-top),var(--panel-surface-bottom)),rgba(var(--theme-panel-rgb),.64);color:var(--panel-text-main);font:12px/1.45 Inter,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;box-shadow:inset 1px 0 0 rgba(250,251,255,.04),inset 0 1px 0 rgba(250,251,255,.08),-26px 0 84px rgba(0,0,0,.42);backdrop-filter:blur(42px) saturate(145%);-webkit-backdrop-filter:blur(42px) saturate(145%);opacity:0;visibility:hidden;pointer-events:none;transform:translateX(calc(100% + 24px));transition:opacity 240ms ease,transform 400ms cubic-bezier(.16,1,.3,1),visibility 400ms}
     #tuning-panel.open{opacity:1;visibility:visible;pointer-events:auto;transform:translateX(0)}
     .tc-head{padding:26px 68px 20px 22px;border-bottom:1px solid var(--panel-divider);flex:none}.tc-eyebrow{margin:0 0 7px;color:rgba(167,180,204,.58);font-size:10px;font-weight:600;letter-spacing:.16em}.tc-title-line{display:flex;align-items:center;gap:10px}.tc-title{margin:0;color:var(--model-metal-bright);font-size:21px;font-weight:570;letter-spacing:.01em;line-height:1.25}.tc-count{margin-left:auto;padding:3px 7px;border:1px solid rgba(0,145,255,.24);border-radius:99px;background:var(--panel-accent-soft);color:rgba(151,201,244,.84);font-size:9px;white-space:nowrap}
     .tc-intro{margin:8px 0 0;color:var(--panel-text-soft);font-size:12px;line-height:1.65}.tc-intro b{font-weight:600;color:rgba(151,201,244,.84)}.tc-intro em{font-style:normal;color:rgba(236,190,130,.82)}
@@ -6973,12 +7118,356 @@ function initTuningPanelV2() {
     .tc-color-controls{display:grid;grid-template-columns:42px 1fr;gap:9px}.tc-color{width:42px;height:var(--panel-field-height);box-sizing:border-box;border:1px solid var(--panel-card-border);border-radius:7px;background:var(--panel-control-bg);padding:3px;cursor:pointer}.tc-hex{width:100%}
     .tc-switch-wrap{display:flex;align-items:center;justify-content:space-between}.tc-switch{position:relative;width:38px;height:22px;flex:none}.tc-switch input{position:absolute;opacity:0}.tc-switch span{position:absolute;inset:0;border-radius:99px;background:rgba(126,142,170,.3);cursor:pointer;transition:.18s}.tc-switch span:after{content:'';position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:rgba(194,203,219,.62);transition:.18s}.tc-switch input:checked+span{background:rgba(0,112,200,.72)}.tc-switch input:checked+span:after{transform:translateX(16px);background:var(--model-metal-bright)}
     .tc-foot{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--panel-footer-gap);padding:14px 18px max(16px,env(safe-area-inset-bottom));border-top:1px solid var(--panel-divider);background:rgba(5,8,14,.42);backdrop-filter:blur(24px) saturate(130%);-webkit-backdrop-filter:blur(24px) saturate(130%);flex:none}.tc-action.danger{border-color:rgba(222,105,101,.2);color:rgba(244,170,166,.78);background:rgba(105,30,28,.18)}.tc-action.danger:hover{border-color:rgba(236,120,117,.38);background:rgba(126,39,36,.28);color:rgba(255,198,194,.94)}
-    @media(max-width:680px){#tuning-toggle{top:max(14px,env(safe-area-inset-top));right:max(14px,env(safe-area-inset-right))}#tuning-toggle[aria-expanded="true"]{top:max(20px,env(safe-area-inset-top));right:max(18px,env(safe-area-inset-right))}#tuning-panel{top:auto;left:0;right:0;bottom:0;width:100%;max-height:min(88dvh,760px);padding-top:0;border-top:1px solid var(--panel-border);border-left:0;border-radius:20px 20px 0 0;box-shadow:0 -24px 72px rgba(0,0,0,.62);transform:translateY(calc(100% + 24px))}#tuning-panel.open{transform:translateY(0)}.tc-head{padding:20px 64px 15px 18px}.tc-scroll{padding:8px 15px 18px}.tc-foot{padding-right:14px;padding-left:14px}.tc-number-controls{grid-template-columns:minmax(0,1fr) 96px}.tc-theme-controls{grid-template-columns:42px minmax(0,1fr)}.tc-theme-apply{grid-column:1/-1}}
+    @media(max-width:680px){#tuning-toggle[aria-expanded="true"]{top:max(20px,env(safe-area-inset-top));right:max(18px,env(safe-area-inset-right))}#tuning-panel{top:auto;left:0;right:0;bottom:0;width:100%;max-height:min(88dvh,760px);padding-top:0;border-top:1px solid var(--panel-border);border-left:0;border-radius:20px 20px 0 0;box-shadow:0 -24px 72px rgba(0,0,0,.62);transform:translateY(calc(100% + 24px))}#tuning-panel.open{transform:translateY(0)}.tc-head{padding:20px 64px 15px 18px}.tc-scroll{padding:8px 15px 18px}.tc-foot{padding-right:14px;padding-left:14px}.tc-number-controls{grid-template-columns:minmax(0,1fr) 96px}.tc-theme-controls{grid-template-columns:42px minmax(0,1fr)}.tc-theme-apply{grid-column:1/-1}}
+
+    /* ==========================================================
+       液态玻璃皮肤 —— 材质与高光逐项对齐 careercompass 导航的
+       LiquidGlass（.effect 底色/内阴影 + .css-liquid-glass__chrome
+       描边高光 + ::after 镜面斜光）
+       ========================================================== */
+    .rf-liquid-glass{
+      /* 中性玻璃色板：原 careercompass 色是紫调（card 260 20% 17% / fg 330 32% 95%），
+         压在雨景上会泛一层淡紫蒙版，这里换成纯中性灰 + 纯白前景 */
+      --rf-lg-card:0 0% 16%;
+      --rf-lg-fg:0 0% 100%;
+      --rf-lg-frost:.1;
+      --rf-lg-bloom:rgb(0 0 0 / .35);
+      --rf-lg-border:#ffffff14;
+      --rf-lg-highlight:#ffffff24;
+      --rf-lg-highlight-soft:#ffffff0d;
+      --rf-lg-inset-dark:#0000006b;
+      --rf-lg-specular:#ffffff12;
+      --rf-lg-ease:cubic-bezier(.22,1,.36,1);
+      /* 过渡统一挂到基类：按钮/胶囊的 hover 不再硬切
+         （#tuning-panel 自带更具体的 transition，面板推入动画不受影响） */
+      transition:
+        background-color 220ms var(--rf-lg-ease),
+        border-color 220ms var(--rf-lg-ease),
+        color 180ms var(--rf-lg-ease),
+        box-shadow 260ms var(--rf-lg-ease),
+        transform 200ms var(--rf-lg-ease);
+      isolation:isolate;
+    }
+
+    /* 设置按钮：工具栏折叠态 = 玻璃胶囊（导航同款参数） */
+    .scene-toolbar__toggle.rf-liquid-glass{
+      background:hsl(var(--rf-lg-card) / var(--rf-lg-frost));
+      color:hsl(var(--rf-lg-fg) / .75);
+      box-shadow:
+        inset 0 0 2px 1px hsl(var(--rf-lg-fg) / .1),
+        inset 0 0 10px 4px hsl(var(--rf-lg-fg) / .06),
+        inset 2px -2px 1px -1px var(--rf-lg-highlight),
+        inset -2px 2px 1px -1px var(--rf-lg-highlight),
+        inset 6px -6px 1px -6px var(--rf-lg-highlight-soft),
+        inset -6px 6px 1px -6px var(--rf-lg-highlight-soft),
+        inset 0 0 2px var(--rf-lg-inset-dark),
+        0 4px 16px var(--rf-lg-bloom),
+        0 8px 24px var(--rf-lg-bloom);
+    }
+    .scene-toolbar__toggle.rf-liquid-glass:hover{
+      background:hsl(var(--rf-lg-card) / calc(var(--rf-lg-frost) + .08));
+      color:hsl(var(--rf-lg-fg) / .96);
+    }
+
+    /* 设置按钮：面板展开态 = 玻璃圆形关闭按钮 */
+    #tuning-toggle[aria-expanded="true"].rf-liquid-glass{
+      border:1px solid var(--rf-lg-border);
+      background:hsl(var(--rf-lg-card) / calc(var(--rf-lg-frost) + .08));
+      color:hsl(var(--rf-lg-fg) / .8);
+      box-shadow:
+        inset 0 0 2px 1px hsl(var(--rf-lg-fg) / .1),
+        inset 2px -2px 1px -1px var(--rf-lg-highlight),
+        inset -2px 2px 1px -1px var(--rf-lg-highlight),
+        inset 0 0 2px var(--rf-lg-inset-dark),
+        0 4px 16px var(--rf-lg-bloom),
+        0 8px 24px var(--rf-lg-bloom);
+    }
+    #tuning-toggle[aria-expanded="true"].rf-liquid-glass:hover{
+      border-color:#ffffff2e;
+      background:hsl(var(--rf-lg-card) / calc(var(--rf-lg-frost) + .16));
+      color:hsl(var(--rf-lg-fg) / .98);
+    }
+
+    /* 弹窗面板 = 整块液态玻璃：底色 + 描边高光 + 外发光 */
+    #tuning-panel.rf-liquid-glass{
+      border-left:1px solid var(--rf-lg-border);
+      border-radius:0;
+      background:hsl(var(--rf-lg-card) / calc(var(--rf-lg-frost) + .34));
+      color:hsl(var(--rf-lg-fg) / .92);
+      box-shadow:
+        inset 0 0 2px 1px hsl(var(--rf-lg-fg) / .08),
+        inset 0 0 16px 6px hsl(var(--rf-lg-fg) / .045),
+        inset 2px -2px 1px -1px var(--rf-lg-highlight),
+        inset -2px 2px 1px -1px var(--rf-lg-highlight),
+        inset 8px -8px 1px -8px var(--rf-lg-highlight-soft),
+        inset -8px 8px 1px -8px var(--rf-lg-highlight-soft),
+        inset 0 0 2px var(--rf-lg-inset-dark),
+        -26px 0 84px rgb(0 0 0 / .42);
+    }
+    /* 镜面斜光：45° 两端高光，虚化后压在内容之下 */
+    #tuning-panel.rf-liquid-glass::after{
+      position:absolute;
+      inset:0;
+      z-index:-1;
+      border-radius:inherit;
+      background:linear-gradient(45deg,var(--rf-lg-specular) 0,transparent 28%,transparent 72%,var(--rf-lg-specular) 100%);
+      filter:blur(3px);
+      pointer-events:none;
+      content:'';
+    }
+
+    /* 面板内部模块：统一成玻璃卡片 / 玻璃控件 */
+    #tuning-panel.rf-liquid-glass .tc-head{
+      border-bottom:1px solid var(--rf-lg-border);
+      background:linear-gradient(180deg,#ffffff0a,transparent);
+    }
+    #tuning-panel.rf-liquid-glass .tc-foot{
+      border-top:1px solid var(--rf-lg-border);
+      background:hsl(var(--rf-lg-card) / .34);
+      box-shadow:
+        inset 2px -2px 1px -1px var(--rf-lg-highlight-soft),
+        inset -2px 2px 1px -1px var(--rf-lg-highlight-soft);
+    }
+    #tuning-panel.rf-liquid-glass .tc-section,
+    #tuning-panel.rf-liquid-glass .tc-theme-card{
+      border:1px solid var(--rf-lg-border);
+      border-radius:18px;
+      background:hsl(var(--rf-lg-card) / .28);
+      box-shadow:
+        inset 0 0 2px 1px hsl(var(--rf-lg-fg) / .06),
+        inset 2px -2px 1px -1px var(--rf-lg-highlight-soft),
+        inset -2px 2px 1px -1px var(--rf-lg-highlight-soft),
+        0 8px 24px rgb(0 0 0 / .2);
+    }
+    #tuning-panel.rf-liquid-glass .tc-search,
+    #tuning-panel.rf-liquid-glass .tc-number,
+    #tuning-panel.rf-liquid-glass .tc-hex,
+    #tuning-panel.rf-liquid-glass .tc-color,
+    #tuning-panel.rf-liquid-glass .tc-theme-picker{
+      border:1px solid var(--rf-lg-border);
+      border-radius:10px;
+      background:#ffffff0f;
+      color:hsl(var(--rf-lg-fg) / .92);
+      box-shadow:inset 0 1px 0 #ffffff0f;
+    }
+    #tuning-panel.rf-liquid-glass .tc-search:focus,
+    #tuning-panel.rf-liquid-glass .tc-number:focus,
+    #tuning-panel.rf-liquid-glass .tc-hex:focus{
+      border-color:#ffffff38;
+      box-shadow:inset 0 1px 0 #ffffff14,0 0 0 2px #ffffff1a;
+    }
+    #tuning-panel.rf-liquid-glass .tc-tool-btn,
+    #tuning-panel.rf-liquid-glass .tc-action{
+      border:1px solid var(--rf-lg-border);
+      border-radius:999px;
+      background:#ffffff14;
+      color:hsl(var(--rf-lg-fg) / .94);
+      box-shadow:
+        inset 0 1px 0 #ffffff12,
+        inset 2px -2px 1px -1px var(--rf-lg-highlight-soft);
+    }
+    #tuning-panel.rf-liquid-glass .tc-tool-btn:hover,
+    #tuning-panel.rf-liquid-glass .tc-action:hover{
+      border-color:#ffffff2e;
+      background:#ffffff1c;
+      color:hsl(var(--rf-lg-fg) / .98);
+    }
+    /* 主操作按钮：玻璃白胶囊 + 深色字，保证对比度（原来浅底浅字偏灰） */
+    #tuning-panel.rf-liquid-glass .tc-theme-apply{
+      border:1px solid #ffffff5c;
+      border-radius:999px;
+      background:hsl(var(--rf-lg-fg) / .9);
+      color:#0e1116;
+      font-weight:650;
+      box-shadow:inset 0 1px 0 #ffffffa6,0 6px 18px rgb(0 0 0 / .3);
+    }
+    #tuning-panel.rf-liquid-glass .tc-theme-apply:hover{
+      background:hsl(var(--rf-lg-fg) / 1);
+      color:#000;
+      transform:translateY(-1px);
+      box-shadow:inset 0 1px 0 #ffffffcc,0 10px 24px rgb(0 0 0 / .36);
+    }
+    #tuning-panel.rf-liquid-glass .tc-switch span{
+      background:#ffffff1a;
+      box-shadow:inset 0 1px 0 #ffffff14;
+    }
+    #tuning-panel.rf-liquid-glass .tc-switch input:checked+span{
+      background:hsl(var(--rf-lg-fg) / .3);
+    }
+    #tuning-panel.rf-liquid-glass .tc-switch input:checked+span:after{
+      background:hsl(var(--rf-lg-fg) / .96);
+    }
+    #tuning-panel.rf-liquid-glass .tc-range{
+      background:#ffffff24;
+    }
+    #tuning-panel.rf-liquid-glass .tc-range::-webkit-slider-thumb{
+      border:1px solid #ffffffb8;
+      background:hsl(var(--rf-lg-fg) / .82);
+      box-shadow:0 0 0 3px #ffffff1a;
+    }
+
+    /* ---------- 小字提亮：原样式 alpha 偏低，压在雨景玻璃上发灰 ---------- */
+    #tuning-panel.rf-liquid-glass{
+      /* 覆盖主题里 --panel-text-soft 的 .58，简介/主题说明/角标一起变亮 */
+      --panel-text-soft:rgba(209,218,234,.9);
+    }
+    #tuning-panel.rf-liquid-glass .tc-eyebrow{color:rgba(215,223,238,.88)}
+    #tuning-panel.rf-liquid-glass .tc-title{color:rgba(250,252,255,.98)}
+    #tuning-panel.rf-liquid-glass .tc-section summary{color:rgba(246,248,253,.97)}
+    #tuning-panel.rf-liquid-glass .tc-sec-count{color:rgba(189,201,222,.86)}
+    #tuning-panel.rf-liquid-glass .tc-sec-desc,
+    #tuning-panel.rf-liquid-glass .tc-desc{color:rgba(200,211,229,.9)}
+    #tuning-panel.rf-liquid-glass .tc-label{color:rgba(243,246,253,.97)}
+    #tuning-panel.rf-liquid-glass .tc-key{color:rgba(177,191,215,.82)}
+    #tuning-panel.rf-liquid-glass .tc-param:not(.outside-soft) .tc-soft{color:rgba(189,201,222,.86)}
+    #tuning-panel.rf-liquid-glass .tc-search-meta{color:rgba(191,203,223,.86)}
+    #tuning-panel.rf-liquid-glass .tc-theme-title{color:rgba(248,250,255,.98)}
+    #tuning-panel.rf-liquid-glass .tc-theme-reset{color:rgba(204,215,232,.9)}
+    #tuning-panel.rf-liquid-glass .tc-reset-one{color:rgba(177,191,215,.82)}
+    #tuning-panel.rf-liquid-glass .tc-reset-one:hover{color:rgba(247,250,255,.98)}
+
+    /* ---------- 交互过渡：hover / focus / active 统一缓动，避免硬切 ---------- */
+    #tuning-panel.rf-liquid-glass .tc-search,
+    #tuning-panel.rf-liquid-glass .tc-number,
+    #tuning-panel.rf-liquid-glass .tc-hex,
+    #tuning-panel.rf-liquid-glass .tc-color,
+    #tuning-panel.rf-liquid-glass .tc-theme-picker,
+    #tuning-panel.rf-liquid-glass .tc-tool-btn,
+    #tuning-panel.rf-liquid-glass .tc-action,
+    #tuning-panel.rf-liquid-glass .tc-theme-apply{
+      transition:
+        background-color 180ms var(--rf-lg-ease),
+        border-color 180ms var(--rf-lg-ease),
+        color 160ms var(--rf-lg-ease),
+        box-shadow 220ms var(--rf-lg-ease),
+        transform 160ms var(--rf-lg-ease);
+    }
+    #tuning-panel.rf-liquid-glass .tc-tool-btn:active,
+    #tuning-panel.rf-liquid-glass .tc-action:active,
+    #tuning-panel.rf-liquid-glass .tc-theme-apply:active,
+    #tuning-panel.rf-liquid-glass .tc-theme-reset:active,
+    #tuning-panel.rf-liquid-glass .tc-reset-one:active{transform:scale(.96)}
+    #tuning-panel.rf-liquid-glass .tc-theme-reset,
+    #tuning-panel.rf-liquid-glass .tc-reset-one{
+      transition:color 160ms var(--rf-lg-ease),background-color 160ms var(--rf-lg-ease),transform 140ms var(--rf-lg-ease);
+    }
+    #tuning-panel.rf-liquid-glass .tc-section,
+    #tuning-panel.rf-liquid-glass .tc-theme-card{
+      transition:background-color 200ms var(--rf-lg-ease),border-color 200ms var(--rf-lg-ease),box-shadow 240ms var(--rf-lg-ease);
+    }
+    #tuning-panel.rf-liquid-glass .tc-param{transition:background-color 200ms var(--rf-lg-ease)}
+    #tuning-panel.rf-liquid-glass .tc-section summary{transition:color 160ms var(--rf-lg-ease)}
+    #tuning-panel.rf-liquid-glass .tc-switch span{
+      transition:background-color 200ms var(--rf-lg-ease),box-shadow 200ms var(--rf-lg-ease);
+    }
+    #tuning-panel.rf-liquid-glass .tc-switch span:after{
+      transition:
+        transform 240ms var(--rf-lg-ease),
+        background-color 200ms var(--rf-lg-ease),
+        box-shadow 200ms var(--rf-lg-ease);
+    }
+    #tuning-panel.rf-liquid-glass .tc-switch:hover span{box-shadow:inset 0 1px 0 #ffffff26,0 0 0 3px #ffffff12}
+    #tuning-panel.rf-liquid-glass .tc-range{
+      transition:background-color 180ms var(--rf-lg-ease);
+    }
+    #tuning-panel.rf-liquid-glass .tc-range::-webkit-slider-thumb{
+      transition:box-shadow 200ms var(--rf-lg-ease),background-color 180ms var(--rf-lg-ease),transform 160ms var(--rf-lg-ease);
+    }
+    #tuning-panel.rf-liquid-glass .tc-range:hover::-webkit-slider-thumb{
+      background:hsl(var(--rf-lg-fg) / .96);
+      transform:scale(1.12);
+      box-shadow:0 0 0 4px #ffffff26;
+    }
+
+    /* ---------- 兜底：面板内所有可交互元素都挂上过渡，杜绝硬切 ---------- */
+    #tuning-panel.rf-liquid-glass button,
+    #tuning-panel.rf-liquid-glass input,
+    #tuning-panel.rf-liquid-glass select,
+    #tuning-panel.rf-liquid-glass summary,
+    #tuning-panel.rf-liquid-glass a{
+      transition:
+        background-color 180ms var(--rf-lg-ease),
+        border-color 180ms var(--rf-lg-ease),
+        color 160ms var(--rf-lg-ease),
+        box-shadow 220ms var(--rf-lg-ease),
+        transform 160ms var(--rf-lg-ease),
+        opacity 200ms var(--rf-lg-ease),
+        filter 200ms var(--rf-lg-ease);
+    }
+    /* 小节展开箭头 */
+    #tuning-panel.rf-liquid-glass .tc-section summary:after{
+      transition:transform 240ms var(--rf-lg-ease),color 160ms var(--rf-lg-ease);
+    }
+    /* 卡片 / 控件的悬停反馈（原来完全没有） */
+    #tuning-panel.rf-liquid-glass .tc-section:hover,
+    #tuning-panel.rf-liquid-glass .tc-theme-card:hover{
+      border-color:#ffffff24;
+      background:hsl(var(--rf-lg-card) / .36);
+    }
+    #tuning-panel.rf-liquid-glass .tc-theme-picker:hover,
+    #tuning-panel.rf-liquid-glass .tc-color:hover,
+    #tuning-panel.rf-liquid-glass .tc-hex:hover,
+    #tuning-panel.rf-liquid-glass .tc-number:hover{
+      border-color:#ffffff2e;
+      background:#ffffff1a;
+    }
+    /* 需重建提示条 */
+    #tuning-panel.rf-liquid-glass .tc-refresh button:hover{
+      border-color:rgba(235,166,79,.44);
+      background:rgba(145,84,18,.42);
+      color:#ffe0b0;
+    }
+    #tuning-panel.rf-liquid-glass .tc-refresh button:active{transform:scale(.96)}
+    /* 长列表(128 个参数)滚动不再瞬间跳 */
+    #tuning-panel.rf-liquid-glass .tc-scroll{scroll-behavior:smooth}
+
+    /* 不支持 backdrop-filter:url() 或用户降低动效/透明度时退回毛玻璃 */
+    @supports not ((-webkit-backdrop-filter:url(#a)) or (backdrop-filter:url(#a))){
+      .rf-liquid-glass{
+        -webkit-backdrop-filter:blur(24px) saturate(1.5);
+        backdrop-filter:blur(24px) saturate(1.5);
+      }
+    }
+    @media (prefers-reduced-transparency:reduce),(prefers-reduced-motion:reduce){
+      .rf-liquid-glass{
+        -webkit-backdrop-filter:blur(20px) saturate(1.2);
+        backdrop-filter:blur(20px) saturate(1.2);
+      }
+      #tuning-panel.rf-liquid-glass::after{display:none}
+    }
+    @media (prefers-reduced-motion:reduce){
+      .rf-liquid-glass,
+      #tuning-panel.rf-liquid-glass *,
+      #tuning-panel.rf-liquid-glass *::after,
+      #tuning-panel.rf-liquid-glass *::before{transition-duration:.01ms!important}
+      #tuning-panel.rf-liquid-glass .tc-tool-btn:active,
+      #tuning-panel.rf-liquid-glass .tc-action:active,
+      #tuning-panel.rf-liquid-glass .tc-theme-apply:active,
+      #tuning-panel.rf-liquid-glass .tc-theme-reset:active,
+      #tuning-panel.rf-liquid-glass .tc-reset-one:active,
+      #tuning-panel.rf-liquid-glass .tc-theme-apply:hover,
+      #tuning-panel.rf-liquid-glass .tc-range:hover::-webkit-slider-thumb{transform:none}
+    }
+
+    @media(max-width:680px){
+      #tuning-panel.rf-liquid-glass{
+        border-top:1px solid var(--rf-lg-border);
+        border-left:0;
+        border-radius:20px 20px 0 0;
+        box-shadow:
+          inset 0 0 2px 1px hsl(var(--rf-lg-fg) / .08),
+          inset 2px -2px 1px -1px var(--rf-lg-highlight),
+          inset -2px 2px 1px -1px var(--rf-lg-highlight),
+          inset 0 0 2px var(--rf-lg-inset-dark),
+          0 -24px 72px rgb(0 0 0 / .62);
+      }
+    }
   `;
   document.head.appendChild(style);
 
   const panelToggle = document.createElement('button');
   panelToggle.id = 'tuning-toggle';
+  panelToggle.className = 'scene-toolbar__toggle';
   panelToggle.type = 'button';
   panelToggle.title = '打开效果控制台';
   panelToggle.setAttribute('aria-label', '打开效果控制台');
@@ -7284,6 +7773,10 @@ function initTuningPanelV2() {
   panel.appendChild(footer);
   sceneToolbar.appendChild(panelToggle);
   document.body.appendChild(panel);
+
+  /* 设置按钮用导航同款参数；面板是竖直长条，单独调参 */
+  installLiquidGlass(panelToggle, LIQUID_GLASS_NAV);
+  installLiquidGlass(panel, LIQUID_GLASS_PANEL);
 
   const openPanel = (open) => {
     if (open) document.body.appendChild(panelToggle);

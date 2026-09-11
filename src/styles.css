@@ -313,7 +313,8 @@ input {
   -webkit-backdrop-filter: blur(24px) saturate(145%);
   opacity: 0.8;
   transform: none;
-  transition: opacity 180ms ease, border-color 180ms ease, background-color 180ms ease;
+  transition: opacity 180ms ease, border-color 180ms ease, background-color 180ms ease,
+    box-shadow 220ms ease, backdrop-filter 220ms ease, -webkit-backdrop-filter 220ms ease;
 }
 
 .scene-toolbar:hover,
@@ -345,7 +346,14 @@ input {
   cursor: pointer;
   transition:
     background-color 180ms ease,
-    color 180ms ease;
+    color 180ms ease,
+    box-shadow 200ms ease,
+    transform 150ms ease;
+}
+
+.rainfall-editor-toggle:active,
+.rain-sound-toggle:active {
+  transform: scale(0.94);
 }
 
 .rainfall-editor-toggle__icon {
@@ -353,6 +361,7 @@ input {
   width: 18px;
   height: 18px;
   color: rgba(133, 181, 228, 0.62);
+  transition: color 200ms ease;
 }
 
 .rainfall-editor-toggle__icon svg {
@@ -399,6 +408,7 @@ input {
   width: 18px;
   height: 18px;
   color: rgba(150, 176, 204, 0.62);
+  transition: color 200ms ease;
 }
 
 .rain-sound-toggle__icon svg {
@@ -1196,6 +1206,16 @@ input {
 
   .rain-sound-toggle__wave {
     animation: none !important;
+  }
+
+  .rainfall-editor-toggle__icon,
+  .rain-sound-toggle__icon {
+    transition: none;
+  }
+
+  .rainfall-editor-toggle:active,
+  .rain-sound-toggle:active {
+    transform: none;
   }
 }
 
