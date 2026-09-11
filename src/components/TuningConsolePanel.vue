@@ -20,7 +20,6 @@ import { useEngine } from '../composables/useRainformEngine';
 import {
   disposeLiquidGlass,
   installLiquidGlass,
-  LIQUID_GLASS_NAV,
   LIQUID_GLASS_PANEL
 } from '../composables/useLiquidGlass';
 import type {
@@ -344,7 +343,8 @@ function onDocumentPointerDown(event: PointerEvent) {
 
 onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointerDown, true);
-  installLiquidGlass(toggleButton.value, LIQUID_GLASS_NAV);
+  // 按钮不再挂液态玻璃滤镜：滤镜贴图中心是一块 93% alpha 的灰色实心块，
+  // 会把透明圆钮染成一颗深灰球，跟旁边两颗原生按钮永远不是一个材质。
   if (panel.value) installLiquidGlass(panel.value, LIQUID_GLASS_PANEL);
   glassInstalled.value = true;
   syncValues();
@@ -363,7 +363,6 @@ onBeforeUnmount(() => {
       id="tuning-toggle"
       ref="toggleButton"
       class="scene-toolbar__toggle"
-      :class="{ 'rf-liquid-glass': glassInstalled }"
       type="button"
       aria-controls="tuning-panel"
       :aria-expanded="open"

@@ -324,6 +324,15 @@ input {
   opacity: 1;
 }
 
+/* 效果控制台打开时整个工具栏让位：右上角只留面板自己的关闭键。
+   工具栏的 z-index 是 1202，高于面板(1200)和关闭键(1201)，
+   不淡出的话编辑/雨声按钮会浮在面板标题行上，和“N 个参数”徽章、关闭键挤成一团。
+   这里只动 opacity —— 工具栏本来就带 180ms 的 opacity 过渡，淡入淡出是平滑的。 */
+.rainfall-dashboard.console-open .scene-toolbar {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .rainfall-editor-toggle,
 .rain-sound-toggle {
   position: static;
@@ -360,7 +369,7 @@ input {
   display: block;
   width: 18px;
   height: 18px;
-  color: rgba(133, 181, 228, 0.62);
+  color: rgba(250, 251, 255, 0.88);
   transition: color 200ms ease;
 }
 
@@ -407,7 +416,7 @@ input {
   display: block;
   width: 18px;
   height: 18px;
-  color: rgba(150, 176, 204, 0.62);
+  color: rgba(250, 251, 255, 0.88);
   transition: color 200ms ease;
 }
 
@@ -432,11 +441,11 @@ input {
 }
 
 .rain-sound-toggle[aria-pressed="true"] {
-  background: rgba(133, 181, 228, 0.08);
+  background: rgba(250, 251, 255, 0.1);
 }
 
 .rain-sound-toggle[aria-pressed="true"] .rain-sound-toggle__icon {
-  color: rgba(173, 205, 235, 0.92);
+  color: #ffffff;
 }
 
 .rain-sound-toggle[aria-pressed="true"] .rain-sound-toggle__wave--inner {

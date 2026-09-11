@@ -73,7 +73,11 @@ watch(engine, (instance) => {
 </script>
 
 <template>
-  <main class="rainfall-dashboard" :aria-label="t('dashboardAria')">
+  <main
+    class="rainfall-dashboard"
+    :class="{ 'console-open': consoleOpen }"
+    :aria-label="t('dashboardAria')"
+  >
     <SceneCanvas
       @sound-change="soundEnabled = $event"
       @theme-applied="themeApplied = $event"

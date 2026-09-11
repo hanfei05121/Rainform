@@ -15,6 +15,17 @@ All notable Rainform releases are documented here.
   from production output.
 - Added `npm run typecheck` (`vue-tsc`) to the validation chain and extended
   `scripts/check-project.mjs` to the new file layout.
+- Brightened the water surface so the pool reads as a lake rather than a black void. The custom
+  shaders do not `#include <colorspace_fragment>`, so their linear output was displayed as-is and
+  every dark colour was crushed by roughly a 2.2 gamma; the deep/surface colours are now
+  compensated for that. Also re-enabled the ripple highlight (`ripple.gain`), turned the primary
+  and secondary wave amplitudes back on, and added a constant slow-moving micro-wave to the surface
+  normal so the water is never a dead-flat mirror even when rainfall is sparse.
+- Rebuilt the environment as a daylight lake instead of a dark void: added a procedural cloud sky
+  dome that follows the camera, widened the water plane into an open lake, split wave motion into
+  large-scale geometry swells and a separate normal-space ripple, faded distant water into the
+  horizon colour, and replaced the black exponential fog with a sky-toned one. Added a "sky"
+  section to the tuning console.
 - Public source repository governance, validation and noncommercial licensing.
 
 ## [2.0.0] - 2026-07-23

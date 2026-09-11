@@ -557,20 +557,38 @@ const TUNING = {
     maxSize: 86.3 // 溅起水滴最大尺寸(px)。调大会飞溅更粗；调小会更针尖。
   },
 
+  // ── 天空 ── 白天乌云。天空穹顶每帧跟随相机，所以永远不会被 camera.far 裁掉。
+  // 这一组颜色是“直出”的：着色器结尾自己做了 linear→sRGB，所以十六进制就是屏幕上看到的颜色。
+  sky: {
+    topColor: 0x6a7787,     // 天顶。乌云压顶的灰蓝；调暗更阴沉，调亮更接近多云。
+    horizonColor: 0xd2d6da, // 地平线。云缝里透出来的亮白，主要靠它撑起“白天”的观感。
+    cloudColor: 0x535b66,   // 云的暗部。调暗云更厚重，调亮更像薄云。
+    cloudCover: 0.58,       // 云量。0 是万里无云，1 是整片阴云。
+    cloudScale: 1.35,       // 云团大小。调大云更粗更大块，调小更碎。
+    cloudSpeed: 0.0075,     // 云飘移速度。调 0 就完全静止。
+    horizonFade: 150,       // 湖面向远处融入天空色的距离（世界单位）。调小水天交界更近，调大湖面更开阔。
+    fogColor: 0x9aa4ae,     // 远景雾色。要贴近地平线色，远景才会自然融进天空而不是发黑。
+    fogDensity: 0.007       // 雾的浓度。调大远景更朦胧，调小能看得更远。
+  },
+
   // ── 水面底色 / 涟漪显影 ──
+  // 注意：水面是自定义 ShaderMaterial，而它没有 #include <colorspace_fragment>，
+  // 所以着色器输出的是【线性值】、会被直接当 sRGB 显示 —— 视觉上被压暗约 2.2 次幂。
+  // 下面两个十六进制是「补偿之后」的值，看起来偏亮，但在屏幕上才是正常的深湖蓝。
   water: {
-    deepColor: 0x000000,    // 深水底色。压到接近雾色，水面读作近黑镜面。
-    surfaceColor: 0x2b3240, // 表层色，用于近端渐变。
+    deepColor: 0x4a5865,    // 深水底色。屏幕上约 rgb(18,26,35)，湖面因此有“底”而不是一块纯黑。
+    surfaceColor: 0x92a0b0, // 表层色，用于近端渐变。屏幕上约 rgb(73,90,111)，近端能读出层次。
     roughness: 1,           // 磨砂程度。0 接近镜面，1 更柔和、更漫反射。
     specularStrength: 2.5,  // 镜面高光强度。
     rippleHighlight: 3,     // 波峰反光强度。
     surfaceOpacity: 5,      // 水面基础浓度；过高会产生磨砂白雾感。
-    wavePrimary: 0,         // 大波顶点位移幅度。
-    waveSecondary: 0,       // 小波顶点位移幅度。
+    wavePrimary: 0.34,      // 大波顶点位移幅度（波长约 120 世界单位）。0 是纹丝不动的镜面。
+    waveSecondary: 0.12,    // 中波顶点位移幅度。叠在大波上做中等尺度的起伏。
+    waveNormal: 0.28,       // 法线层面的细节波纹强度。只影响光泽、不改动几何；调大波光更碎更明显。
     reflStrength: 0.5,      // 雨柱倒影亮度。调大水面镜像更亮(竖条更明显)；调小更隐入黑底。
     reflFade: 2.15,         // 倒影长度(世界单位)。调大倒影拖得更远；调小更紧贴水线。
-    rearFadeNearZ: -0.7,    // 后缘渐隐起点。
-    rearFadeFarZ: -4.2      // 后缘完全透明的位置，与背景边界一致。
+    rearFadeNearZ: -110,    // 后缘渐隐起点。湖面扩大后，边缘必须退到很远处才不会露馅。
+    rearFadeFarZ: -195      // 后缘完全透明的位置，避免看见水面的硬边。
   },
 
   // ── 峰值瀑布体积 ── 暴雨峰值处的雾状水体和明暗纹理。
@@ -606,7 +624,7 @@ const TUNING = {
 
   // ── 水面涟漪(GPU 高度场波动) ──
   ripple: {
-    gain: 0,       // 涟漪亮度增益。调大会环纹更亮更明显；调小会更隐。
+    gain: 0.7,     // 涟漪亮度增益。0 会把波峰反光完全关掉（湖面读作死平的镜子）；0.7 能让雨滴环纹看得见。调大会更亮更明显；调小会更隐。
     damping: 0.9999, // 波衰减。调大会波传播更久；调小会更快消失。
     dropRain: 1.51, // 普通雨滴涟漪强度。调大会每滴雨更容易出圈；调小会更平静。
     dropClick: 0.95, // 点击涟漪强度。
@@ -800,6 +818,15 @@ function applyGlobalThemeCss(theme) {
 }
 
 function applyGlobalThemePalette(theme) {
+  // 白天湖景：轴刻度与文字统一用白色 —— 试过天空蓝，压在灰白天穹上反而不如白字清楚。
+  // 刻度数字（12.8 / 6.4）用的是 axisValue，别只改 axisTick 漏掉它。
+  // 浅色文字靠 createAxisLabel 里的深色柔光托底；初始化和切全局主题都会经过这里。
+  theme.axisValue = 0xffffff;
+  theme.axisLine = 0xdfe6ee;
+  theme.axisTick = 0xffffff;
+  theme.axisStrong = 0xffffff;
+  theme.axisTime = 0xf2f6fb;
+  theme.axisUnit = 0xe9eef6;
   PALETTE.fog = theme.fog;
   PALETTE.pearlBright.setHex(theme.metalBright);
   PALETTE.pearlMid.setHex(theme.metalMid);
@@ -979,7 +1006,10 @@ renderer.domElement.addEventListener('webglcontextrestored', () => {
 });
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(PALETTE.fog, isCoarsePointer ? 0.019 : 0.022);
+// 白天湖景：雾必须跟着天空走，否则远景会糊成一团黑。
+// PALETTE.fog 会被全局主题覆盖（见 applyGlobalThemePalette），所以这里显式取天空的雾色，
+// 保证不管主题怎么变，远景都是亮的。
+scene.fog = new THREE.FogExp2(TUNING.sky.fogColor, TUNING.sky.fogDensity);
 
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 110);
 const cameraBase = new THREE.Vector3();
@@ -1027,6 +1057,11 @@ applyCameraPreset();
 applyReadoutPosition();
 syncAxisLabelScale(axisSystem);
 updateRainPlotMask();
+
+// 天空穹顶直接挂在 scene 上，不进 worldGroup：它每帧跟随相机，
+// 不应该受 worldGroup 的任何变换影响。
+const skyDome = createSkyDome();
+scene.add(skyDome);
 
 const waterPlane = createWaterPlane();
 const poolFloor = createPoolFloor();
@@ -1279,6 +1314,7 @@ animate();
       case 'water.surfaceOpacity': waterPlane.material.uniforms.uSurfaceOpacity.value = value; break;
       case 'water.wavePrimary': waterPlane.material.uniforms.uWavePrimary.value = value; break;
       case 'water.waveSecondary': waterPlane.material.uniforms.uWaveSecondary.value = value; break;
+      case 'water.waveNormal': waterPlane.material.uniforms.uWaveNormal.value = value; break;
       case 'water.reflStrength': waterPlane.material.uniforms.uReflStrength.value = value; break;
       case 'water.reflFade': waterPlane.material.uniforms.uReflFade.value = value; break;
       case 'water.rearFadeNearZ':
@@ -1289,6 +1325,18 @@ animate();
         waterPlane.material.uniforms.uRearFadeFarZ.value = value;
         poolFloor.material.uniforms.uRearFadeFarZ.value = value;
         break;
+      case 'sky.topColor': skyDome.material.uniforms.uSkyTop.value.setHex(value); break;
+      case 'sky.horizonColor':
+        skyDome.material.uniforms.uSkyHorizon.value.setHex(value);
+        waterPlane.material.uniforms.uSkyColor.value.setHex(value);
+        break;
+      case 'sky.cloudColor': skyDome.material.uniforms.uCloudColor.value.setHex(value); break;
+      case 'sky.cloudCover': skyDome.material.uniforms.uCloudCover.value = value; break;
+      case 'sky.cloudScale': skyDome.material.uniforms.uCloudScale.value = value; break;
+      case 'sky.cloudSpeed': skyDome.material.uniforms.uCloudSpeed.value = value; break;
+      case 'sky.horizonFade': waterPlane.material.uniforms.uHorizonFade.value = value; break;
+      case 'sky.fogColor': scene.fog.color.setHex(value); break;
+      case 'sky.fogDensity': scene.fog.density = value; break;
       case 'waterfallBody.deepColor': peakWaterfall.materials[0].uniforms.uDeep.value.setHex(value); break;
       case 'waterfallBody.midColor': peakWaterfall.materials[0].uniforms.uMid.value.setHex(value); break;
       case 'waterfallBody.brightColor': peakWaterfall.materials[0].uniforms.uBright.value.setHex(value); break;
@@ -1448,6 +1496,21 @@ animate();
       ]
     },
     {
+      id: 'sky', icon: '☁', title: '天空与远景', open: false,
+      desc: '白天乌云的天穹、云量与飘移速度，以及湖面向远处融入天空的距离。',
+      params: [
+        color('sky.topColor', '天顶色', '乌云压顶处的颜色；调暗更阴沉。'),
+        color('sky.horizonColor', '地平线色', '云缝透光的亮色，主要靠它撑起白天的观感。'),
+        color('sky.cloudColor', '云的暗部', '云团本身的颜色；调暗云更厚重。'),
+        num('sky.cloudCover', '云量', '0 是万里无云，1 是整片阴云。', 0, 1, 0.01),
+        num('sky.cloudScale', '云团大小', '调大云更粗更大块，调小更碎。', 0.2, 5, 0.05),
+        num('sky.cloudSpeed', '云飘移速度', '调 0 则完全静止。', 0, 0.05, 0.0005),
+        num('sky.horizonFade', '水天交界距离', '湖面向远处融入天空色的距离（世界单位）。', 20, 400, 5),
+        color('sky.fogColor', '远景雾色', '贴近地平线色，远景才会自然融入天空而不是发黑。'),
+        num('sky.fogDensity', '雾浓度', '调大远景更朦胧，调小能看得更远；调整后刷新生效。', 0, 0.03, 0.0005, 'reload'),
+      ]
+    },
+    {
       id: 'water', icon: '≈', title: '水面与倒影', open: true,
       desc: '控制近黑水体、镜面高光、程序波动和雨柱倒影。',
       params: [
@@ -1457,12 +1520,13 @@ animate();
         num('water.specularStrength', '镜面高光强度', '控制窄高光亮度；可输入高于滑块范围的值。', 0, 30, 0.05),
         num('water.rippleHighlight', '波峰反光强度', '控制涟漪坡面蓝白高光。', 0, 30, 0.05),
         num('water.surfaceOpacity', '水面基础浓度', '调大更实，调小更通透；过大会发白。', 0, 3, 0.01),
-        num('water.wavePrimary', '大波顶点幅度', '整体缓慢起伏；可用负值反转相位。', -0.25, 0.25, 0.001),
-        num('water.waveSecondary', '小波顶点幅度', '叠加的细碎波动；可用负值反转相位。', -0.25, 0.25, 0.001),
+        num('water.wavePrimary', '大波顶点幅度', '大尺度长波的起伏高度；可用负值反转相位。', -2, 2, 0.01),
+        num('water.waveSecondary', '中波顶点幅度', '叠在大波上的中等起伏；可用负值反转相位。', -2, 2, 0.01),
+        num('water.waveNormal', '细节波光强度', '法线层面的细碎波纹，只影响光泽、不改动几何。', 0, 1, 0.005),
         num('water.reflStrength', '雨柱倒影亮度', '调大水中竖向镜像更明显。', 0, 10, 0.05),
         num('water.reflFade', '雨柱倒影长度', '调大倒影向前延伸更远。', 0.25, 40, 0.05),
-        num('water.rearFadeNearZ', '后缘渐隐起点', '从该世界 Z 坐标开始向黑色背景渐隐。', -20, 10, 0.05),
-        num('water.rearFadeFarZ', '后缘完全消失位置', '到该世界 Z 坐标时水面和池底透明度为 0。', -20, 10, 0.05)
+        num('water.rearFadeNearZ', '后缘渐隐起点', '从该世界 Z 坐标开始向远景渐隐。', -300, 10, 1),
+        num('water.rearFadeFarZ', '后缘完全消失位置', '到该世界 Z 坐标时水面和池底透明度为 0。', -400, 10, 1)
       ]
     },
     {
@@ -1633,6 +1697,10 @@ function animate() {
   state.burst = Math.max(0, state.burst - delta * 1.1);
 
   mistBand.material.uniforms.uTime.value = prefersReducedMotion ? 6.2 : elapsed;
+
+  // 天空穹顶每帧跟到相机位置：它表现的是“无穷远”，所以半径 1 也永远不会被裁剪。
+  skyDome.position.copy(camera.position);
+  skyDome.material.uniforms.uTime.value = prefersReducedMotion ? 0 : elapsed;
 
   if (!prefersReducedMotion) {
     beginImpactFrame(impactPearls, elapsed, delta);
@@ -1889,8 +1957,12 @@ function drawAxisReadout(readoutPanel, displayHour) {
 
   const { canvas, context, texture } = readoutPanel;
   context.clearRect(0, 0, canvas.width, canvas.height);
+
   context.textAlign = 'left';
   context.textBaseline = 'middle';
+  // 与轴标签保持一致：只加一圈深色柔光把字托出天穹，不做玻璃底板。
+  context.shadowColor = 'rgba(4, 14, 28, 0.9)';
+  context.shadowBlur = 12;
 
   const rightEdge = canvas.width - 12;
   const unitText = i18n('axisUnit');
@@ -2075,7 +2147,7 @@ function createAxisSystem() {
     }
 
     const valueLabel = createAxisLabel(formatRainfallTick(value), {
-      height: 0.27,
+      height: 0.33,
       fontSize: 64,
       fontWeight: 350,
       mobileOffsetX: -0.32,
@@ -2087,7 +2159,7 @@ function createAxisSystem() {
     labelOpacityEntries.push({ material: valueLabel.material, baseOpacity: valueLabel.opacity });
 
     const unitLabel = createAxisLabel(i18n('axisUnit'), {
-      height: 0.14,
+      height: 0.172,
       fontSize: 44,
       fontWeight: 450,
       mobileScale: 1.9,
@@ -2095,7 +2167,7 @@ function createAxisSystem() {
       anchorX: 0,
       color: themeHexCss(globalThemePalette.axisUnit)
     });
-    unitLabel.sprite.position.set(yAxisLabelLeft, y - 0.22, z + 0.04);
+    unitLabel.sprite.position.set(yAxisLabelLeft, y - 0.28, z + 0.04);
     labelGroup.add(unitLabel.sprite);
     labelOpacityEntries.push({ material: unitLabel.material, baseOpacity: unitLabel.opacity });
   }
@@ -2103,14 +2175,14 @@ function createAxisSystem() {
   const yAxisHeadingLeft = yAxisLabelLeft;
   const titleLabels = locale === 'zh-CN'
     ? [
-        { text: i18n('axisTitle'), y: headerTop - 0.22, height: 0.44, fontSize: 76, fontWeight: 550, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisStrong) },
-        { text: i18n('axisSubtitle'), y: headerTop - 0.57, height: 0.22, fontSize: 52, fontWeight: 450, mobileScale: 1.55, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisTime) },
-        { text: i18n('axisUnit'), y: headerTop - 0.82, height: 0.15, fontSize: 44, fontWeight: 450, mobileScale: 1.9, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisUnit) }
+        { text: i18n('axisTitle'), y: headerTop - 0.22, height: 0.48, fontSize: 76, fontWeight: 550, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisStrong) },
+        { text: i18n('axisSubtitle'), y: headerTop - 0.57, height: 0.24, fontSize: 52, fontWeight: 450, mobileScale: 1.55, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisTime) },
+        { text: i18n('axisUnit'), y: headerTop - 0.82, height: 0.164, fontSize: 44, fontWeight: 450, mobileScale: 1.9, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisUnit) }
       ]
     : [
-        { text: i18n('axisTitle'), y: headerTop - 0.22, height: 0.4, fontSize: 76, fontWeight: 550, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisStrong) },
-        { text: i18n('axisSubtitle'), y: headerTop - 0.57, height: 0.19, fontSize: 46, fontWeight: 450, mobileScale: 1.55, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisTime) },
-        { text: i18n('axisUnit'), y: headerTop - 0.82, height: 0.15, fontSize: 44, fontWeight: 450, mobileScale: 1.9, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisUnit) }
+        { text: i18n('axisTitle'), y: headerTop - 0.22, height: 0.436, fontSize: 76, fontWeight: 550, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisStrong) },
+        { text: i18n('axisSubtitle'), y: headerTop - 0.57, height: 0.207, fontSize: 46, fontWeight: 450, mobileScale: 1.55, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisTime) },
+        { text: i18n('axisUnit'), y: headerTop - 0.82, height: 0.164, fontSize: 44, fontWeight: 450, mobileScale: 1.9, mobileOffsetX: -0.32, color: themeHexCss(globalThemePalette.axisUnit) }
       ];
   for (const entry of titleLabels) {
     const titleLabel = createAxisLabel(entry.text, {
@@ -2223,7 +2295,12 @@ function createAxisLabel(text, {
   context.fillStyle = color;
   context.textAlign = 'center';
   context.textBaseline = 'middle';
+  // 深色柔光：亮天蓝压在灰白天穹上亮度太接近，靠这一圈把字托出背景。
+  // 比玻璃底板轻，不会挡住后面的雨和湖面。
+  context.shadowColor = 'rgba(4, 14, 28, 0.9)';
+  context.shadowBlur = 10 * resolutionScale;
   context.fillText(text, width * 0.5, canvasHeight * 0.5);
+  context.shadowBlur = 0;
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -3418,8 +3495,107 @@ function updateRainChains(system, elapsed, delta) {
   system.lines.geometry.attributes.aAlpha.needsUpdate = true;
 }
 
+// 白天乌云的天空穹顶。在球体内表面着色，每帧跟随相机位置（见 animate 里的
+// skyDome.position.copy），所以半径取 1 就够 —— 它表现的是“无穷远”，
+// 既不会被 camera.far 裁掉，也不会在镜头拉远时露出边界。
+function createSkyDome() {
+  const geometry = new THREE.SphereGeometry(1, 40, 24);
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uSkyTop: { value: new THREE.Color(TUNING.sky.topColor) },
+      uSkyHorizon: { value: new THREE.Color(TUNING.sky.horizonColor) },
+      uCloudColor: { value: new THREE.Color(TUNING.sky.cloudColor) },
+      uCloudCover: { value: TUNING.sky.cloudCover },
+      uCloudScale: { value: TUNING.sky.cloudScale },
+      uCloudSpeed: { value: TUNING.sky.cloudSpeed }
+    },
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform vec3 uSkyTop;
+      uniform vec3 uSkyHorizon;
+      uniform vec3 uCloudColor;
+      uniform float uCloudCover;
+      uniform float uCloudScale;
+      uniform float uCloudSpeed;
+      varying vec3 vDir;
+
+      float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+      }
+      float valueNoise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+                   mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+      }
+      float fbm(vec2 p) {
+        float total = 0.0;
+        float amplitude = 0.5;
+        for (int i = 0; i < 5; i++) {
+          total += amplitude * valueNoise(p);
+          p *= 2.02;
+          amplitude *= 0.5;
+        }
+        return total;
+      }
+
+      void main() {
+        vec3 dir = normalize(vDir);
+        float height = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+
+        // 天顶 → 地平线的渐变
+        vec3 color = mix(uSkyHorizon, uSkyTop, pow(height, 0.75));
+
+        // 云：把球面方向投影到平面，形成云层的透视。除数不能太小 —— 之前钳到 0.02，
+        // 地平线附近噪声坐标会爆炸成高频噪点，浮点精度丢失后被拉成竖条纹伪影。
+        // 现在钳到 0.12，并且在地平线附近把云整体淡出：远处的云本来就该融进雾气。
+        float above = max(dir.y, 0.12);
+        vec2 cloudUv = dir.xz / above * uCloudScale;
+        float drift = uTime * uCloudSpeed;
+        float clouds = fbm(cloudUv + vec2(drift, drift * 0.35));
+        // 第二层反向缓慢漂移，让云互相错动，而不是整片平移
+        float clouds2 = fbm(cloudUv * 1.9 - vec2(drift * 0.6, drift * 0.2));
+        clouds = mix(clouds, clouds2, 0.35);
+
+        float edge = 1.0 - uCloudCover;
+        float cloudMask = smoothstep(edge, edge + 0.32, clouds);
+        cloudMask *= smoothstep(0.04, 0.22, dir.y);
+        color = mix(color, uCloudColor, cloudMask * 0.88);
+
+        // 地平线以下：水面是半透明的（alpha 上限 0.88），这里的颜色会从水面底下透出来。
+        // 如果继续画云，就会看到“云从湖里透上来”的怪相 —— 上下移动镜头时尤其明显。
+        // 所以地平线以下收敛成一个压暗的水雾色，把云彻底挡在水线以上。
+        vec3 belowColor = uSkyHorizon * 0.42;
+        color = mix(belowColor, color, smoothstep(-0.06, 0.04, dir.y));
+
+        // 自定义着色器不带 colorspace_fragment，这里自己做 linear → sRGB
+        gl_FragColor = vec4(pow(max(color, 0.0), vec3(0.4545)), 1.0);
+      }
+    `,
+    side: THREE.BackSide,
+    depthWrite: false
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.renderOrder = -1000;
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
 function createWaterPlane() {
-  const geometry = new THREE.PlaneGeometry(WORLD.width * 1.16, WORLD.depth * 2.3, 150, 92);
+  // 湖面要大到看不见边界，才读作“一整片湖”。段数只决定顶点起伏的采样精度：
+  // 桌面给足，移动端往下砍一档，避免小 GPU 上顶点量白翻一倍。
+  const lakeSize = 420;
+  const lakeSegments = isCoarsePointer ? 120 : 220;
+  const geometry = new THREE.PlaneGeometry(lakeSize, lakeSize, lakeSegments, lakeSegments);
   geometry.rotateX(-Math.PI / 2);
   // Keep the rendered surface on the same height as the rain impact plane.
   // A lower offset exposed a dark horizontal slit in near-frontal views.
@@ -3448,6 +3624,10 @@ function createWaterPlane() {
       uRippleDisplace: { value: TUNING.ripple.displace },
       uWavePrimary: { value: TUNING.water.wavePrimary },
       uWaveSecondary: { value: TUNING.water.waveSecondary },
+      uWaveNormal: { value: TUNING.water.waveNormal },
+      // 远处的水面要融进天空色，水天之间才是一条柔和的交界，而不是硬边
+      uSkyColor: { value: new THREE.Color(TUNING.sky.horizonColor) },
+      uHorizonFade: { value: TUNING.sky.horizonFade },
       // 降雨强度 LUT（与 mistBand 共享）：按世界 X 给出该列真实雨量，
       // 让水面倒影与上方雨柱逐列对齐。值在场景装配后注入。
       uRainLut: { value: null },
@@ -3470,8 +3650,10 @@ function createWaterPlane() {
 
       void main() {
         vec3 transformed = position;
-        float wave = sin(uTime * 1.2 + position.x * 0.55 + position.z * 0.34) * uWavePrimary;
-        wave += sin(-uTime * 0.86 + position.x * 0.18 - position.z * 0.9) * uWaveSecondary;
+        // 湖面放大到 420 之后，原来的频率会密成一片噪点。这里改成大尺度长波，
+        // 近处的细节波光交给片元阶段的 uWaveNormal，不依赖网格密度。
+        float wave = sin(uTime * 0.55 + position.x * 0.052 + position.z * 0.031) * uWavePrimary;
+        wave += sin(-uTime * 0.41 + position.x * 0.107 - position.z * 0.083) * uWaveSecondary;
         // GPU 高度场驱动真实顶点起伏 — 雨滴落点在水面上顶出凹坑并向外扩散
         vec2 fUv = vec2(
           (position.x - uFieldBounds.x) / (uFieldBounds.y - uFieldBounds.x),
@@ -3499,6 +3681,9 @@ function createWaterPlane() {
       uniform vec4 uFieldBounds;
       uniform vec2 uFieldTexel;
       uniform float uRippleGain;
+      uniform float uWaveNormal;
+      uniform vec3 uSkyColor;
+      uniform float uHorizonFade;
       uniform sampler2D uRainLut;
       uniform vec2 uLutBounds;
       uniform float uReflStrength;
@@ -3507,6 +3692,27 @@ function createWaterPlane() {
       uniform float uRearFadeFarZ;
       varying vec2 vUv;
       varying vec3 vWorld;
+
+      float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+      }
+      float valueNoise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+                   mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+      }
+      float fbm(vec2 p) {
+        float total = 0.0;
+        float amplitude = 0.5;
+        for (int k = 0; k < 4; k++) {
+          total += amplitude * valueNoise(p);
+          p *= 2.03;
+          amplitude *= 0.5;
+        }
+        return total;
+      }
 
       void main() {
         // Sample GPU height field neighbours → per-pixel surface normal
@@ -3528,6 +3734,20 @@ function createWaterPlane() {
         // uRippleGain only controls reflected light energy, not geometry height.
         float nScale = 3.5;
         vec3 normal = normalize(vec3((hL - hR) * nScale, 1.0, (hB - hT) * nScale));
+
+        // 常驻细节波纹：用流动噪声的梯度扰动法线，让【整片湖面】都有碎波光，
+        // 而不是只有图表范围内的高度场涟漪 —— 高度场只覆盖图表区域，湖面其余部分
+        // 全靠这一层提供“水感”。噪声约 3 个世界单位一个波包、随时间缓慢流动；
+        // 只影响光泽、不改动几何，所以不受网格密度限制，uWaveNormal 调 0 即关闭。
+        vec2 detailUv = vWorld.xz * 0.34;
+        vec2 detailDrift = vec2(uTime * 0.06, uTime * 0.042);
+        float detailE = 0.14;
+        float detailC = fbm(detailUv + detailDrift);
+        float detailX = fbm(detailUv + vec2(detailE, 0.0) + detailDrift);
+        float detailZ = fbm(detailUv + vec2(0.0, detailE) + detailDrift);
+        normal = normalize(
+          normal + vec3(detailC - detailX, 0.0, detailC - detailZ) * (uWaveNormal / detailE)
+        );
 
         // Physical water lighting: Fresnel + specular + diffuse
         vec3 viewDir   = normalize(cameraPosition - vWorld);
@@ -3601,6 +3821,14 @@ function createWaterPlane() {
           * smoothstep(0.0, 0.16, 1.0 - vUv.x);
         float alpha = surfaceAlpha * frontFade * rearFade * sideFade;
         if (alpha < 0.002) discard;
+
+        // 远处的水面渐变成天空色：水天之间因此是一条柔和的交界，
+        // 而不是一块深色水面硬生生贴在天空上。
+        // uSkyColor 是线性值，这里同样补一次 linear→sRGB 才能和天空穹顶对上。
+        float distToCamera = length(vWorld.xz - cameraPosition.xz);
+        float horizon = smoothstep(uHorizonFade * 0.3, uHorizonFade, distToCamera);
+        color = mix(color, pow(max(uSkyColor, 0.0), vec3(0.4545)) * 0.94, horizon);
+
         gl_FragColor = vec4(color, alpha);
       }
     `,
@@ -6455,6 +6683,8 @@ function normalizeRainfallValue(value) {
     document.removeEventListener('pointermove', onInteractionInterrupted);
     controls?.dispose?.();
     disposeObject3D(worldGroup);
+    // 天空穹顶挂在 scene 上而不是 worldGroup，所以要单独释放。
+    disposeObject3D(skyDome);
     renderer.dispose?.();
     root.dataset.webglStatus = 'disposed';
   }

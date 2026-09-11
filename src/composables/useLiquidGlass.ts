@@ -6,7 +6,7 @@
 //   → screen 混合 → 通过 backdrop-filter: url(#filter) 应用，
 //   得到「边缘折射、中间平滑」的玻璃质感。
 //
-// 用法：在 onMounted 里调用 installLiquidGlass(el, LIQUID_GLASS_NAV)。
+// 用法：在 onMounted 里调用 installLiquidGlass(el, options)。
 // 所有 ResizeObserver 会在 disposeLiquidGlass() 里统一断开。
 //
 // 注意：这份实现只服务于开发环境的「效果控制台」（设置按钮 + 面板），
@@ -52,9 +52,6 @@ export const LIQUID_GLASS_DEFAULTS: LiquidGlassConfig = {
   xChannel: 'R',
   yChannel: 'B'
 };
-
-/** 导航同款参数（scale -80 / blur 6 / g-offset 2 / b-offset 4）。 */
-export const LIQUID_GLASS_NAV: Partial<LiquidGlassConfig> = {};
 
 /** 面板是竖直长条：收窄折射带，并追加少量高斯模糊以保证正文可读。 */
 export const LIQUID_GLASS_PANEL: Partial<LiquidGlassConfig> = { radius: 0, border: 0.14, displace: 14 };
